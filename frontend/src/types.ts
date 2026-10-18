@@ -132,6 +132,8 @@ export interface FacilityItem {
 
 export interface Appointment {
   id: string;
+  /** Human-readable booking reference, e.g. APT-20261020-4F2A1 */
+  code?: string;
   tokenNumber?: string;
   patientId?: string;
   createdAt: string;
@@ -147,11 +149,41 @@ export interface Appointment {
   preferredTime: string;
   reason: string;
   additionalMessage?: string;
-  source: string;
+  source: 'WEBSITE' | 'PATIENT_PORTAL' | 'FRONT_DESK' | 'PHONE' | 'VOICE_AI';
   language?: 'KN' | 'EN';
   status: AppointmentStatus;
   notes?: any;
   agentSessionId?: string;
+}
+
+export type StaffRole = Exclude<UserRole, 'PATIENT'>;
+
+export interface Profile {
+  id: string;
+  role: UserRole;
+  fullName: string;
+  email?: string;
+  phone?: string;
+  dob?: string;
+  gender?: 'MALE' | 'FEMALE' | 'OTHER';
+  active: boolean;
+}
+
+export interface StaffMember {
+  id: string;
+  fullName: string;
+  email?: string;
+  phone?: string;
+  role: UserRole;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface DoctorLeave {
+  id: string;
+  doctorId: string;
+  date: string;
+  reason?: string;
 }
 
 export interface AuthUser {

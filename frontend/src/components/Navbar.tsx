@@ -1,18 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { HospitalInfo } from '../types';
 import { PhoneCall, Menu, X, UserCheck, CalendarCheck, ChevronDown, Ambulance } from 'lucide-react';
 
 interface Props {
   hospitalInfo: HospitalInfo;
-  onOpenAuthModal: () => void;
+  /** True when a patient is signed in; the account link then opens their portal. */
+  signedIn: boolean;
   onNavigateToAppointment: () => void;
 }
 
 export const Navbar: React.FC<Props> = ({
   hospitalInfo,
-  onOpenAuthModal,
+  signedIn,
   onNavigateToAppointment
 }) => {
+  const accountHref = signedIn ? '/my' : '/login';
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [moreDropdownOpen, setMoreDropdownOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -158,15 +161,15 @@ export const Navbar: React.FC<Props> = ({
 
             {/* Action CTAs */}
             <div className="flex items-center space-x-2 shrink-0">
-              {/* Portals Login */}
-              <button
-                onClick={onOpenAuthModal}
+              {/* Patient account */}
+              <Link
+                to={accountHref}
                 className="px-2.5 sm:px-3 py-2 text-xs font-bold text-slate-700 hover:text-blue-600 hover:bg-slate-50 rounded-xl transition-all flex items-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap border border-transparent hover:border-slate-200"
               >
                 <UserCheck className="w-4 h-4 text-blue-600" />
-                <span className="hidden sm:inline">Portals Login</span>
-                <span className="sm:hidden">Login</span>
-              </button>
+                <span className="hidden sm:inline">{signedIn ? 'My Appointments' : 'Patient Login'}</span>
+                <span className="sm:hidden">{signedIn ? 'My Account' : 'Login'}</span>
+              </Link>
 
               {/* Book Appointment Primary Button */}
               <button
@@ -223,15 +226,13 @@ export const Navbar: React.FC<Props> = ({
               <CalendarCheck className="w-4 h-4" />
               <span>Book Appointment Now</span>
             </button>
-            <button
-              onClick={() => {
-                setMobileMenuOpen(false);
-                onOpenAuthModal();
-              }}
-              className="w-full text-center py-2.5 px-4 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+            <Link
+              to={accountHref}
+              onClick={() => setMobileMenuOpen(false)}
+              className="block w-full text-center py-2.5 px-4 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
             >
-              Hospital Portal Sign In / Register
-            </button>
+              {signedIn ? 'My Appointments' : 'Patient Login'}
+            </Link>
           </div>
         </div>
       )}

@@ -1,13 +1,13 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { HospitalInfo } from '../types';
 import { ShieldCheck, PhoneCall, Mail, MapPin, Ambulance } from 'lucide-react';
 
 interface Props {
   hospitalInfo: HospitalInfo;
-  onOpenAuthModal: () => void;
 }
 
-export const Footer: React.FC<Props> = ({ hospitalInfo, onOpenAuthModal }) => {
+export const Footer: React.FC<Props> = ({ hospitalInfo }) => {
   return (
     <footer className="bg-[#0A1020] text-slate-300 text-xs border-t border-slate-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
@@ -62,33 +62,18 @@ export const Footer: React.FC<Props> = ({ hospitalInfo, onOpenAuthModal }) => {
             </ul>
           </div>
 
-          {/* Col 3: Patient Portals */}
+          {/* Col 3: Patients */}
           <div className="space-y-3">
-            <h4 className="font-bold text-white uppercase text-[11px] tracking-wider">Authenticated Portals</h4>
+            <h4 className="font-bold text-white uppercase text-[11px] tracking-wider">Patients</h4>
             <ul className="space-y-2 text-slate-400">
               <li>
-                <button
-                  onClick={onOpenAuthModal}
-                  className="hover:text-blue-400 text-left transition-colors py-1 block cursor-pointer"
-                >
-                  Patient Sign In / Signup
-                </button>
+                <a href="/#appointment" className="hover:text-blue-400 transition-colors py-1 inline-block">Book an Appointment</a>
               </li>
               <li>
-                <button
-                  onClick={onOpenAuthModal}
-                  className="hover:text-blue-400 text-left transition-colors py-1 block cursor-pointer"
-                >
-                  Doctor Registration &amp; Login
-                </button>
+                <Link to="/login" className="hover:text-blue-400 transition-colors py-1 inline-block">Patient Login</Link>
               </li>
               <li>
-                <button
-                  onClick={onOpenAuthModal}
-                  className="hover:text-blue-400 text-left transition-colors py-1 block cursor-pointer"
-                >
-                  Hospital Management Login
-                </button>
+                <Link to="/my" className="hover:text-blue-400 transition-colors py-1 inline-block">My Appointments</Link>
               </li>
             </ul>
           </div>

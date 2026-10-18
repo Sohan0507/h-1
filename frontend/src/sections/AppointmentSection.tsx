@@ -1,7 +1,22 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { Department, Doctor, Appointment } from '../types';
-import { apiClient } from '../services/apiClient';
+import { publicApi } from '../services/db';
+import { errorMessage } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
 import { CalendarCheck, CheckCircle2, AlertCircle, Clock, Stethoscope, User, Phone, MessageSquare, Loader2 } from 'lucide-react';
+
+const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
+const addDaysIso = (iso: string, days: number) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+
+// One key per booking attempt, so a double-click or network retry cannot create two bookings.
+const newIdempotencyKey = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 interface Props {
   departments: Department[];
@@ -18,8 +33,11 @@ export const AppointmentSection: React.FC<Props> = ({
   const [patientPhone, setPatientPhone] = useState('');
   const [departmentId, setDepartmentId] = useState('');
   const [doctorId, setDoctorId] = useState(preselectedDoctorId || '');
-  const [preferredDate, setPreferredDate] = useState(new Date().toISOString().split('T')[0]);
-  const [preferredTime, setPreferredTime] = useState('10:00 AM');
+  const [preferredDate, setPreferredDate] = useState(todayIso());
+  const [slotTime, setSlotTime] = useState('');
+  const [slots, setSlots] = useState<Array<{ time: string; label: string; available: number }>>([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [idempotencyKey, setIdempotencyKey] = useState(newIdempotencyKey);
   const [reason, setReason] = useState('');
   const [additionalMessage, setAdditionalMessage] = useState('');
 
@@ -27,6 +45,37 @@ export const AppointmentSection: React.FC<Props> = ({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [createdAppointment, setCreatedAppointment] = useState<Appointment | null>(null);
+  const { profile } = useAuth();
+
+  // Prefill from the signed-in patient's profile.
+  useEffect(() => {
+    if (profile?.role !== 'PATIENT') return;
+    if (profile.fullName) setPatientName(name => name || profile.fullName);
+    if (profile.phone) setPatientPhone(phone => phone || profile.phone!.replace(/\D/g, '').slice(-10));
+  }, [profile]);
+
+  // Live slot availability for the chosen doctor and date.
+  useEffect(() => {
+    if (!doctorId || !preferredDate) {
+      setSlots([]);
+      setSlotTime('');
+      return;
+    }
+    let cancelled = false;
+    setSlotsLoading(true);
+    publicApi
+      .getAvailableSlots(doctorId, preferredDate)
+      .then(list => {
+        if (cancelled) return;
+        setSlots(list);
+        setSlotTime(current => (list.some(s => s.time === current && s.available > 0) ? current : list.find(s => s.available > 0)?.time ?? ''));
+      })
+      .catch(() => !cancelled && setSlots([]))
+      .finally(() => !cancelled && setSlotsLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [doctorId, preferredDate, createdAppointment]);
 
   useEffect(() => {
     if (preselectedDoctorId) {
@@ -50,11 +99,6 @@ export const AppointmentSection: React.FC<Props> = ({
     }
   }, [departmentId, doctors]);
 
-  const timeSlots = [
-    '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM',
-    '12:00 PM', '12:30 PM', '04:00 PM', '04:30 PM', '05:00 PM', '05:30 PM', '06:00 PM'
-  ];
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
@@ -66,30 +110,28 @@ export const AppointmentSection: React.FC<Props> = ({
     if (!departmentId) return setErrorMsg('Please select a department.');
     if (!doctorId) return setErrorMsg('Please select a doctor.');
     if (!preferredDate) return setErrorMsg('Please select an appointment date.');
+    if (!slotTime) return setErrorMsg('Please choose an available time slot.');
     if (!reason.trim()) return setErrorMsg('Please enter a reason for your visit.');
 
     setSubmitting(true);
     try {
-      const idempotencyKey = `idemp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const appt = await apiClient.createAppointment({
-        patientName: patientName.trim(),
-        patientPhone: patientPhone.trim(),
-        departmentId,
+      const appt = await publicApi.bookAppointment({
         doctorId,
-        preferredDate,
-        preferredTime,
+        date: preferredDate,
+        slotTime,
+        patientName: patientName.trim(),
+        patientPhone: digits,
         reason: reason.trim(),
         additionalMessage: additionalMessage.trim() || undefined,
-        source: 'WEBSITE'
-      }, idempotencyKey);
+        idempotencyKey,
+      });
 
       setCreatedAppointment(appt);
-      setPatientName('');
-      setPatientPhone('');
+      setIdempotencyKey(newIdempotencyKey());
       setReason('');
       setAdditionalMessage('');
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to submit appointment. Please try again.');
+    } catch (err) {
+      setErrorMsg(errorMessage(err, 'Failed to submit appointment. Please try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -106,7 +148,7 @@ export const AppointmentSection: React.FC<Props> = ({
             Schedule Doctor Consultation
           </h2>
           <p className="text-xs xs:text-sm sm:text-base text-slate-600">
-            Select your preferred department, doctor, and convenient date/time slot. Instant confirmation.
+            Select your department, doctor, date and an available OPD slot. You'll get a booking ID and token number instantly.
           </p>
         </div>
 
@@ -118,10 +160,10 @@ export const AppointmentSection: React.FC<Props> = ({
             </div>
             <div>
               <span className="text-[10px] xs:text-xs font-bold text-emerald-700 uppercase tracking-widest bg-emerald-50 px-2.5 xs:px-3 py-1 rounded-full border border-emerald-200">
-                Appointment Booked & Syncing to Hospital Admin
+                {createdAppointment.status === 'CONFIRMED' ? 'Appointment Confirmed' : 'Booking Request Received'}
               </span>
               <h3 className="text-xl sm:text-2xl font-black text-slate-900 mt-3 break-words">
-                Appointment ID: <span className="text-blue-600 font-mono">{createdAppointment.id}</span>
+                Booking ID: <span className="text-blue-600 font-mono">{createdAppointment.code}</span>
               </h3>
               <p className="text-xs sm:text-sm text-slate-600 mt-2 leading-relaxed">
                 Thank you <strong className="text-slate-800">{createdAppointment.patientName}</strong>! Your appointment with <strong className="text-slate-800">{createdAppointment.doctorName}</strong> ({createdAppointment.departmentName}) has been received for <strong className="text-slate-800">{createdAppointment.preferredDate} at {createdAppointment.preferredTime}</strong>.
@@ -130,9 +172,14 @@ export const AppointmentSection: React.FC<Props> = ({
 
             <div className="bg-slate-50 p-3.5 sm:p-4 rounded-xl sm:rounded-2xl text-xs text-slate-600 text-left space-y-1.5 border border-slate-100">
               <div className="flex justify-between"><span>Patient Phone:</span> <span className="font-semibold text-slate-900">{createdAppointment.patientPhone}</span></div>
-              <div className="flex justify-between"><span>Booking Status:</span> <span className="font-bold text-blue-600">CONFIRMED</span></div>
-              <div className="flex justify-between"><span>OPD Desk Notification:</span> <span className="font-semibold text-emerald-700">Verified &amp; Dispatched</span></div>
+              <div className="flex justify-between"><span>OPD Token Number:</span> <span className="font-bold text-slate-900">{createdAppointment.tokenNumber}</span></div>
+              <div className="flex justify-between"><span>Booking Status:</span> <span className="font-bold text-blue-600">{createdAppointment.status === 'CONFIRMED' ? 'CONFIRMED' : 'AWAITING CONFIRMATION'}</span></div>
             </div>
+            {createdAppointment.status !== 'CONFIRMED' && (
+              <p className="text-xs text-slate-600">
+                Our front desk will call you on this number to confirm. <Link to="/login" className="font-bold text-blue-600 hover:underline">Log in with this mobile number</Link> to track your bookings.
+              </p>
+            )}
 
             <button
               onClick={() => setCreatedAppointment(null)}
@@ -197,7 +244,8 @@ export const AppointmentSection: React.FC<Props> = ({
                 </label>
                 <input
                   type="date"
-                  min={new Date().toISOString().split('T')[0]}
+                  min={todayIso()}
+                  max={addDaysIso(todayIso(), 60)}
                   value={preferredDate}
                   onChange={(e) => setPreferredDate(e.target.value)}
                   required
@@ -212,14 +260,25 @@ export const AppointmentSection: React.FC<Props> = ({
                   Preferred Time Slot *
                 </label>
                 <select
-                  value={preferredTime}
-                  onChange={(e) => setPreferredTime(e.target.value)}
+                  value={slotTime}
+                  onChange={(e) => setSlotTime(e.target.value)}
                   required
-                  className="w-full min-h-[44px] bg-slate-50 border border-slate-300 text-slate-900 rounded-xl p-2.5 sm:p-3 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 touch-manipulation"
+                  disabled={slotsLoading || slots.length === 0}
+                  className="w-full min-h-[44px] bg-slate-50 border border-slate-300 text-slate-900 rounded-xl p-2.5 sm:p-3 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 touch-manipulation disabled:opacity-60"
                 >
-                  {timeSlots.map(t => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
+                  {slotsLoading ? (
+                    <option value="">Checking availability…</option>
+                  ) : !doctorId ? (
+                    <option value="">Choose a doctor first</option>
+                  ) : slots.length === 0 ? (
+                    <option value="">No OPD on this date — try another day</option>
+                  ) : (
+                    slots.map(s => (
+                      <option key={s.time} value={s.time} disabled={s.available <= 0}>
+                        {s.label} {s.available <= 0 ? '(full)' : `(${s.available} left)`}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
 

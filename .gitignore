@@ -6,6 +6,7 @@ yarn-error.log*
 
 # Production build artifacts
 dist/
+dist-staff/
 build/
 .output/
 

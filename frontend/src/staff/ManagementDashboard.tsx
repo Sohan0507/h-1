@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Appointment, Doctor, DoctorApplication, Department, ServiceItem, FacilityItem, AuthUser, VoiceCall } from '../types';
-import { apiClient } from '../services/apiClient';
-import { fallbackManagementStats, fallbackAppointments, fallbackDoctorApplications, fallbackDoctors, fallbackAuditLogs } from '../services/mockData';
+import { Appointment, AppointmentStatus, AuditLog, Doctor, AuthUser, VoiceCall } from '../types';
+import { accountApi, staffApi, DashboardStats } from '../services/db';
+import { errorMessage } from '../lib/supabase';
+import { StaffManagement } from './StaffManagement';
 import {
   Building2,
   Users,
@@ -33,15 +34,27 @@ import {
 interface Props {
   user: AuthUser;
   onLogout: () => void;
-  onNavigateHome: () => void;
 }
 
-export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigateHome }) => {
-  const [stats, setStats] = useState<any>(fallbackManagementStats);
-  const [appointments, setAppointments] = useState<Appointment[]>(fallbackAppointments);
-  const [doctorApps, setDoctorApps] = useState<DoctorApplication[]>(fallbackDoctorApplications);
-  const [doctors, setDoctors] = useState<Doctor[]>(fallbackDoctors);
-  const [auditLogs, setAuditLogs] = useState<any[]>(fallbackAuditLogs);
+const REFRESH_INTERVAL_MS = 60_000;
+
+const SOURCE_LABELS: Record<Appointment['source'], string> = {
+  WEBSITE: '🌐 Website',
+  PATIENT_PORTAL: '👤 Patient login',
+  FRONT_DESK: '🏥 Front desk',
+  PHONE: '📞 Phone',
+  VOICE_AI: '🎙️ Voice AI',
+};
+
+const formatDuration = (seconds: number) => `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+
+export const ManagementDashboard: React.FC<Props> = ({ user, onLogout }) => {
+  const isAdmin = user.role === 'HOSPITAL_ADMIN' || user.role === 'SUPER_ADMIN';
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [voiceCalls, setVoiceCalls] = useState<VoiceCall[]>([]);
   const [selectedCase, setSelectedCase] = useState<VoiceCall | null>(null);
   const [receptionistNoteInput, setReceptionistNoteInput] = useState('');
@@ -49,115 +62,61 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
   const [caseStatusFilter, setCaseStatusFilter] = useState<'ALL' | 'NEW' | 'UNDER_REVIEW' | 'CLOSED'>('ALL');
   const [caseSearchQuery, setCaseSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'receptionist_cases' | 'appointments' | 'applications' | 'doctors' | 'audit'>(() => {
-    return user.role === 'RECEPTIONIST' ? 'receptionist_cases' : 'overview';
+  const [activeTab, setActiveTab] = useState<'overview' | 'receptionist_cases' | 'appointments' | 'doctors' | 'staff' | 'audit'>(() => {
+    return user.role === 'RECEPTIONIST' ? 'appointments' : 'overview';
   });
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     loadManagementData();
-
-    const handleSync = (e: any) => {
-      const newApt = e.detail;
-      if (newApt) {
-        setAppointments(prev => {
-          const idx = prev.findIndex(a => a.id === newApt.id);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = newApt;
-            return next;
-          }
-          return [newApt, ...prev];
-        });
-      }
-    };
-
-    const handleCallsSync = (e: any) => {
-      const newCall = e.detail;
-      if (newCall) {
-        setVoiceCalls(prev => {
-          const idx = prev.findIndex(c => c.id === newCall.id || c.callId === newCall.callId);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = { ...next[idx], ...newCall };
-            return next;
-          }
-          return [newCall, ...prev];
-        });
-        setSelectedCase(current => {
-          if (current && (current.id === newCall.id || current.callId === newCall.callId)) {
-            return { ...current, ...newCall };
-          }
-          return current;
-        });
-      }
-    };
-
-    window.addEventListener('hospital_appointments_updated', handleSync);
-    window.addEventListener('hospital_calls_updated', handleCallsSync);
-    window.addEventListener('storage', loadManagementData);
-    return () => {
-      window.removeEventListener('hospital_appointments_updated', handleSync);
-      window.removeEventListener('hospital_calls_updated', handleCallsSync);
-      window.removeEventListener('storage', loadManagementData);
-    };
+    const timer = window.setInterval(loadManagementData, REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
   }, []);
 
   const loadManagementData = async () => {
     setLoading(true);
     try {
-      const [dashStats, appts, apps, docs, calls] = await Promise.all([
-        apiClient.getManagementDashboard().catch(() => fallbackManagementStats),
-        apiClient.getManagementAppointments().catch(() => fallbackAppointments),
-        apiClient.getDoctorApplications().catch(() => fallbackDoctorApplications),
-        apiClient.getManagementDoctors().catch(() => fallbackDoctors),
-        apiClient.getVoiceCalls().catch(() => [])
+      const [dashStats, appts, docs, calls] = await Promise.all([
+        staffApi.getDashboardStats(),
+        accountApi.getAppointments(),
+        staffApi.getDoctors(),
+        staffApi.getVoiceCalls(),
       ]);
-      setStats(dashStats || fallbackManagementStats);
-      setAppointments(appts && appts.length > 0 ? appts : fallbackAppointments);
-      setDoctorApps(apps && apps.length > 0 ? apps : fallbackDoctorApplications);
-      setDoctors(docs && docs.length > 0 ? docs : fallbackDoctors);
-      setVoiceCalls(calls || []);
-
+      setStats(dashStats);
+      setAppointments(appts);
+      setDoctors(docs);
+      setVoiceCalls(calls);
+      setSelectedCase(current => (current ? calls.find(c => c.id === current.id) ?? current : current));
       if (user.role === 'SUPER_ADMIN') {
-        const logs = await apiClient.getManagementAuditLogs().catch(() => fallbackAuditLogs);
-        setAuditLogs(logs && logs.length > 0 ? logs : fallbackAuditLogs);
+        setAuditLogs(await staffApi.getAuditLogs());
       }
+      setLoadError(null);
     } catch (err) {
-      console.error('Error loading management data:', err);
+      setLoadError(errorMessage(err, 'Could not load dashboard data.'));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleReviewApp = async (id: string, status: 'APPROVED' | 'REJECTED') => {
+  const handleStatusUpdate = async (id: string, status: AppointmentStatus) => {
     try {
-      await apiClient.reviewDoctorApplication(id, status);
-      setDoctorApps(prev => prev.map(a => a.id === id ? { ...a, status } : a));
-    } catch (err: any) {
-      setDoctorApps(prev => prev.map(a => a.id === id ? { ...a, status } : a));
+      await accountApi.updateAppointmentStatus(id, status);
+      setAppointments(await accountApi.getAppointments());
+    } catch (err) {
+      alert(errorMessage(err, 'Failed to update the appointment.'));
     }
   };
 
-  const handleStatusUpdate = async (id: string, status: string) => {
-    try {
-      await apiClient.updateAppointmentStatus(id, status);
-      setAppointments(prev => prev.map(a => a.id === id ? { ...a, status: status as any } : a));
-    } catch (err: any) {
-      setAppointments(prev => prev.map(a => a.id === id ? { ...a, status: status as any } : a));
-    }
+  const replaceCall = (updated: VoiceCall) => {
+    setVoiceCalls(prev => prev.map(c => (c.id === updated.id ? updated : c)));
+    setSelectedCase(updated);
   };
 
   const handleAssignToMe = async (callId: string) => {
     try {
-      const updated = await apiClient.updateVoiceCallCase(callId, {
-        assignedReceptionist: user.name,
-        caseStatus: 'UNDER_REVIEW'
-      });
-      setVoiceCalls(prev => prev.map(c => (c.id === callId || c.callId === callId) ? updated : c));
-      setSelectedCase(updated);
+      replaceCall(await staffApi.updateVoiceCall(callId, { assignedReceptionist: user.name, caseStatus: 'UNDER_REVIEW' }));
     } catch (err) {
-      console.error('Failed to assign case:', err);
+      alert(errorMessage(err, 'Failed to assign case.'));
     }
   };
 
@@ -166,37 +125,46 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
     try {
       const noteToAdd = `[${user.name} - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}]: ${receptionistNoteInput.trim()}`;
       const currentNotes = selectedCase?.receptionistNotes ? `${selectedCase.receptionistNotes}\n${noteToAdd}` : noteToAdd;
-      const updated = await apiClient.updateVoiceCallCase(callId, {
-        receptionistNotes: currentNotes,
-        assignedReceptionist: selectedCase?.assignedReceptionist || user.name
-      });
-      setVoiceCalls(prev => prev.map(c => (c.id === callId || c.callId === callId) ? updated : c));
-      setSelectedCase(updated);
+      replaceCall(
+        await staffApi.updateVoiceCall(callId, {
+          receptionistNotes: currentNotes,
+          assignedReceptionist: selectedCase?.assignedReceptionist || user.name,
+        })
+      );
       setReceptionistNoteInput('');
     } catch (err) {
-      console.error('Failed to add note:', err);
+      alert(errorMessage(err, 'Failed to add note.'));
     }
   };
 
   const handleCloseCase = async (callId: string) => {
     try {
       const resNote = resolutionNotesInput.trim() || 'Verified patient details and finalized case.';
-      const updated = await apiClient.closeVoiceCallCase(callId, resNote);
-      setVoiceCalls(prev => prev.map(c => (c.id === callId || c.callId === callId) ? updated : c));
-      setSelectedCase(updated);
+      const notes = selectedCase?.receptionistNotes ? `${selectedCase.receptionistNotes}\n[CLOSED]: ${resNote}` : `[CLOSED]: ${resNote}`;
+      replaceCall(
+        await staffApi.updateVoiceCall(callId, {
+          caseStatus: 'CLOSED',
+          closedAt: new Date().toISOString(),
+          closedBy: user.name,
+          receptionistNotes: notes,
+        })
+      );
       setResolutionNotesInput('');
     } catch (err) {
-      console.error('Failed to close case:', err);
+      alert(errorMessage(err, 'Failed to close case.'));
     }
   };
 
   const pendingCasesCount = voiceCalls.filter(c => !c.caseStatus || c.caseStatus === 'NEW').length;
 
+  const q = searchQuery.trim().toLowerCase();
   const filteredAppointments = appointments.filter(a =>
-    a.patientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    a.doctorName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    a.departmentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    a.id.toLowerCase().includes(searchQuery.toLowerCase())
+    !q ||
+    a.patientName.toLowerCase().includes(q) ||
+    a.patientPhone.includes(q) ||
+    a.doctorName.toLowerCase().includes(q) ||
+    a.departmentName.toLowerCase().includes(q) ||
+    (a.code ?? '').toLowerCase().includes(q)
   );
 
   const filteredVoiceCalls = voiceCalls.filter(c => {
@@ -221,15 +189,12 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
       <header className="bg-slate-950 border-b border-slate-800 sticky top-0 z-30 shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-6">
-            <button onClick={onNavigateHome} className="p-2.5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors cursor-pointer" title="Back to Public Site">
-              <ArrowLeft className="w-5 h-5" />
-            </button>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/30">
                 <Building2 className="w-6 h-6" />
               </div>
               <div>
-                <h1 className="font-bold text-xl text-white leading-tight">ClinicOS</h1>
+                <h1 className="font-bold text-xl text-white leading-tight">We Care Staff</h1>
                 <p className="text-[10px] uppercase tracking-wider font-bold text-blue-400">Administration Portal</p>
               </div>
             </div>
@@ -293,21 +258,6 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
           </button>
 
           <button
-            onClick={() => setActiveTab('applications')}
-            className={`px-4 py-2.5 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === 'applications' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>Doctor Registrations</span>
-            {doctorApps.filter(a => a.status === 'PENDING_VERIFICATION' || a.status === 'UNDER_REVIEW').length > 0 && (
-              <span className="bg-amber-500 text-slate-950 px-2 py-0.5 rounded-full text-[10px] font-black">
-                {doctorApps.filter(a => a.status === 'PENDING_VERIFICATION' || a.status === 'UNDER_REVIEW').length}
-              </span>
-            )}
-          </button>
-
-          <button
             onClick={() => setActiveTab('doctors')}
             className={`px-4 py-2.5 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-2 ${
               activeTab === 'doctors' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-800'
@@ -316,6 +266,18 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
             <Stethoscope className="w-4 h-4" />
             <span>Active Doctors ({doctors.length})</span>
           </button>
+
+          {isAdmin && (
+            <button
+              onClick={() => setActiveTab('staff')}
+              className={`px-4 py-2.5 text-xs font-extrabold rounded-xl transition-all cursor-pointer flex items-center gap-2 ${
+                activeTab === 'staff' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-800/60 text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span>Staff &amp; Access</span>
+            </button>
+          )}
 
           {user.role === 'SUPER_ADMIN' && (
             <button
@@ -330,6 +292,13 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
           )}
         </div>
 
+        {loadError && (
+          <div role="alert" className="p-4 bg-rose-950/60 border border-rose-500/40 rounded-2xl text-rose-200 text-xs font-semibold flex items-center justify-between gap-3">
+            <span>{loadError}</span>
+            <button onClick={loadManagementData} className="underline font-bold">Retry</button>
+          </div>
+        )}
+
         {/* Tab 1: Overview */}
         {activeTab === 'overview' && (
           <div className="space-y-6 animate-in fade-in duration-200">
@@ -340,9 +309,9 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
                   <span>Today's Appointments</span>
                   <CalendarCheck className="w-4 h-4 text-blue-400" />
                 </div>
-                <div className="text-3xl font-black text-blue-400">{stats.todayAppointmentsCount || stats.todayAppointments || 26}</div>
-                <div className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
-                  <span>↑ +18% vs yesterday</span>
+                <div className="text-3xl font-black text-blue-400">{stats?.todayAppointments ?? '—'}</div>
+                <div className="text-[11px] text-slate-400 font-semibold flex items-center gap-1">
+                  <span>{stats ? `${stats.yesterdayAppointments} yesterday · ${stats.pendingConfirmation} awaiting confirmation` : ''}</span>
                 </div>
               </div>
 
@@ -351,8 +320,8 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
                   <span>Active Doctors</span>
                   <Stethoscope className="w-4 h-4 text-emerald-400" />
                 </div>
-                <div className="text-3xl font-black text-emerald-400">{stats.totalDoctorsCount || stats.activeDoctors || doctors.length}</div>
-                <div className="text-[11px] text-slate-400 font-medium">Across {stats.activeDepartments || 15} Specialty Depts</div>
+                <div className="text-3xl font-black text-emerald-400">{stats?.activeDoctors ?? '—'}</div>
+                <div className="text-[11px] text-slate-400 font-medium">Across {stats?.activeDepartments ?? '—'} departments</div>
               </div>
 
               <div className="bg-slate-800/90 p-5 rounded-2xl border border-slate-700 space-y-2 shadow-sm">
@@ -360,8 +329,8 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
                   <span>AI Voice Bookings</span>
                   <Sparkles className="w-4 h-4 text-purple-400" />
                 </div>
-                <div className="text-3xl font-black text-purple-400">{stats.voiceCallsHandled || 364}</div>
-                <div className="text-[11px] text-emerald-400 font-semibold">{stats.voiceSatisfactionRate || "98.2%"} Automated Resolution</div>
+                <div className="text-3xl font-black text-purple-400">{stats?.voiceBookings ?? '—'}</div>
+                <div className="text-[11px] text-slate-400 font-semibold">{stats ? `${stats.voiceCalls} calls handled · ${stats.openVoiceCases} open cases` : ''}</div>
               </div>
 
               <div className="bg-slate-800/90 p-5 rounded-2xl border border-slate-700 space-y-2 shadow-sm">
@@ -369,8 +338,8 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
                   <span>Registered Patients</span>
                   <Users className="w-4 h-4 text-indigo-400" />
                 </div>
-                <div className="text-3xl font-black text-indigo-400">{stats.totalPatientsCount || stats.totalPatients || 1420}</div>
-                <div className="text-[11px] text-slate-400 font-medium">OPD Bed Occupancy: {stats.opdOccupancy || "88%"}</div>
+                <div className="text-3xl font-black text-indigo-400">{stats?.registeredPatients ?? '—'}</div>
+                <div className="text-[11px] text-slate-400 font-medium">{stats ? `${stats.upcomingAppointments} upcoming appointments` : ''}</div>
               </div>
             </div>
 
@@ -384,19 +353,19 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
                 <div className="grid grid-cols-2 gap-3 text-xs">
                   <div className="p-3 bg-slate-900 rounded-xl border border-slate-800">
                     <div className="text-slate-400 font-semibold">Total Voice Minutes</div>
-                    <div className="text-xl font-bold text-white mt-1">{stats.telephonyStats?.totalMinutes || "1,420 mins"}</div>
+                    <div className="text-xl font-bold text-white mt-1">{stats ? `${stats.voiceMinutes} mins` : '—'}</div>
                   </div>
                   <div className="p-3 bg-slate-900 rounded-xl border border-slate-800">
                     <div className="text-slate-400 font-semibold">Average Call Duration</div>
-                    <div className="text-xl font-bold text-white mt-1">{stats.telephonyStats?.avgDuration || "1m 48s"}</div>
+                    <div className="text-xl font-bold text-white mt-1">{stats ? formatDuration(stats.avgCallSeconds) : '—'}</div>
                   </div>
                   <div className="p-3 bg-slate-900 rounded-xl border border-slate-800">
-                    <div className="text-slate-400 font-semibold">Self-Service AI Ratio</div>
-                    <div className="text-xl font-bold text-emerald-400 mt-1">{stats.telephonyStats?.resolvedByAI || "94.6%"}</div>
+                    <div className="text-slate-400 font-semibold">Bookings by Voice AI</div>
+                    <div className="text-xl font-bold text-emerald-400 mt-1">{stats?.voiceBookings ?? '—'}</div>
                   </div>
                   <div className="p-3 bg-slate-900 rounded-xl border border-slate-800">
-                    <div className="text-slate-400 font-semibold">Language Mix</div>
-                    <div className="text-sm font-bold text-blue-300 mt-1">{stats.telephonyStats?.bilingualRatio || "62% KN / 38% EN"}</div>
+                    <div className="text-slate-400 font-semibold">Open Call Cases</div>
+                    <div className="text-xl font-bold text-blue-300 mt-1">{stats?.openVoiceCases ?? '—'}</div>
                   </div>
                 </div>
               </div>
@@ -912,8 +881,9 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
                     <tr key={a.id} className="hover:bg-slate-900/60 transition-colors">
                       <td className="p-3">
                         <span className="font-mono text-indigo-300 font-extrabold bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-500/30">
-                          {a.tokenNumber || a.id}
+                          #{a.tokenNumber}
                         </span>
+                        <div className="text-[10px] text-slate-500 font-mono mt-1">{a.code}</div>
                       </td>
                       <td className="p-3 font-bold text-white">{a.patientName}</td>
                       <td className="p-3 font-mono">{a.patientPhone}</td>
@@ -926,10 +896,10 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
                         <div className="text-[11px] text-emerald-400">{a.preferredTime}</div>
                       </td>
                       <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold whitespace-nowrap ${
                           a.source === 'VOICE_AI' ? 'bg-purple-950 text-purple-300 border border-purple-500/30' : 'bg-slate-800 text-slate-300'
                         }`}>
-                          {a.source === 'VOICE_AI' ? '🎙️ Voice AI' : '🌐 Web'}
+                          {SOURCE_LABELS[a.source] ?? a.source}
                         </span>
                       </td>
                       <td className="p-3">
@@ -942,8 +912,16 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
                           {a.status}
                         </span>
                       </td>
-                      <td className="p-3 text-right space-x-1.5">
-                        {a.status !== 'CONFIRMED' && a.status !== 'COMPLETED' && (
+                      <td className="p-3 text-right space-x-1.5 whitespace-nowrap">
+                        {a.status === 'NEW' && (
+                          <button
+                            onClick={() => handleStatusUpdate(a.id, 'CONTACTED')}
+                            className="bg-slate-700 hover:bg-slate-600 text-white px-2.5 py-1 rounded-lg font-bold text-[11px] transition-colors cursor-pointer"
+                          >
+                            Contacted
+                          </button>
+                        )}
+                        {(a.status === 'NEW' || a.status === 'CONTACTED') && (
                           <button
                             onClick={() => handleStatusUpdate(a.id, 'CONFIRMED')}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded-lg font-bold text-[11px] transition-colors cursor-pointer"
@@ -959,7 +937,15 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
                             Complete
                           </button>
                         )}
-                        {a.status !== 'CANCELLED' && a.status !== 'COMPLETED' && (
+                        {a.status === 'CONFIRMED' && (
+                          <button
+                            onClick={() => handleStatusUpdate(a.id, 'NO_SHOW')}
+                            className="bg-slate-700 hover:bg-slate-600 text-white px-2.5 py-1 rounded-lg font-bold text-[11px] transition-colors cursor-pointer"
+                          >
+                            No-show
+                          </button>
+                        )}
+                        {(a.status === 'NEW' || a.status === 'CONTACTED' || a.status === 'CONFIRMED') && (
                           <button
                             onClick={() => handleStatusUpdate(a.id, 'CANCELLED')}
                             className="bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white px-2 py-1 rounded-lg font-bold text-[11px] transition-colors cursor-pointer"
@@ -976,55 +962,9 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
           </div>
         )}
 
-        {/* Tab 3: Doctor Registration Applications */}
-        {activeTab === 'applications' && (
-          <div className="bg-slate-800/90 p-6 rounded-2xl border border-slate-700 space-y-4 animate-in fade-in duration-200">
-            <h3 className="font-bold text-lg text-white">Pending Doctor Verification Applications</h3>
-            {doctorApps.length === 0 ? (
-              <div className="text-xs text-slate-400 italic">No doctor applications found.</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {doctorApps.map((app) => (
-                  <div key={app.id} className="bg-slate-900 p-5 rounded-2xl border border-slate-700 space-y-3 shadow-md">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
-                          app.status === 'APPROVED' ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30' :
-                          app.status === 'REJECTED' ? 'bg-rose-950 text-rose-300 border border-rose-500/30' :
-                          'bg-amber-950 text-amber-300 border border-amber-500/30'
-                        }`}>
-                          {app.status}
-                        </span>
-                        <h4 className="text-base font-bold text-white mt-1.5">{app.name}</h4>
-                        <div className="text-xs text-indigo-400 font-semibold">{app.specialization}</div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">{app.qualification} • Reg: {app.registrationNumber}</div>
-                      </div>
-
-                      {(app.status === 'PENDING_VERIFICATION' || app.status === 'UNDER_REVIEW') && (
-                        <div className="flex flex-col gap-1.5 shrink-0">
-                          <button
-                            onClick={() => handleReviewApp(app.id, 'APPROVED')}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded-xl text-xs flex items-center gap-1 cursor-pointer transition-colors shadow-sm"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Approve</span>
-                          </button>
-                          <button
-                            onClick={() => handleReviewApp(app.id, 'REJECTED')}
-                            className="bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white font-bold px-3 py-1.5 rounded-xl text-xs flex items-center gap-1 cursor-pointer transition-colors"
-                          >
-                            <XCircle className="w-3.5 h-3.5" />
-                            <span>Reject</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-300 bg-slate-950/80 p-3 rounded-xl border border-slate-800/80 leading-relaxed">{app.bio}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+        {/* Staff & access (admins) */}
+        {activeTab === 'staff' && isAdmin && (
+          <StaffManagement currentUser={user} doctors={doctors} />
         )}
 
         {/* Tab 4: Active Doctors */}
@@ -1036,11 +976,11 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
                 <div key={d.id} className="bg-slate-900 p-4 rounded-2xl border border-slate-700 flex items-start space-x-3.5 shadow-sm">
                   <img src={d.photoUrl} alt={d.name} className="w-14 h-14 rounded-2xl object-cover border border-slate-700 shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <div className="font-bold text-white text-sm truncate">{d.name}</div>
+                    <div className="font-bold text-white text-sm truncate">{d.name}{!d.active && <span className="ml-2 text-[10px] text-amber-400">(hidden)</span>}</div>
                     <div className="text-[11px] text-slate-400 truncate">{d.designation}</div>
                     <div className="text-xs text-emerald-400 font-semibold mt-0.5">{d.departmentName}</div>
                     <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-2">
-                      <span>Fee: ₹{d.consultationFee}</span>
+                      <span>Fee: {d.consultationFee != null ? `₹${d.consultationFee}` : '—'}</span>
                       <span>•</span>
                       <span>Exp: {d.experienceYears} yrs</span>
                     </div>
@@ -1062,13 +1002,13 @@ export const ManagementDashboard: React.FC<Props> = ({ user, onLogout, onNavigat
                     <div className="font-bold text-indigo-300 flex items-center gap-2">
                       <span>{log.action}</span>
                       <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono font-normal">
-                        {log.userId || log.actor?.name || 'System'}
+                        {log.actor ? `${log.actor.role} ${log.actor.id.slice(0, 8)}` : 'System'}
                       </span>
                     </div>
-                    <div className="text-[11px] text-slate-300 mt-1 leading-relaxed">{log.details || `Modified ${log.entity} #${log.entityId}`}</div>
+                    <div className="text-[11px] text-slate-300 mt-1 leading-relaxed">{`${log.entity} ${log.entityId}`}{log.details?.code ? ` · ${log.details.code}` : ''}{log.details?.from ? ` · ${log.details.from} → ${log.details.to}` : ''}</div>
                   </div>
                   <div className="text-[11px] text-slate-500 font-mono shrink-0">
-                    {new Date(log.createdAt || log.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {new Date(log.createdAt ?? Date.now()).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}
                   </div>
                 </div>
               ))}

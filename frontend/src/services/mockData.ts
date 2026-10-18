@@ -566,7 +566,7 @@ export const fallbackAppointments: Appointment[] = [
     preferredTime: "02:30 PM",
     reason: "Child Vaccination & Growth Review",
     status: "NEW",
-    source: "WEB",
+    source: "WEBSITE",
     createdAt: new Date().toISOString()
   },
   {
