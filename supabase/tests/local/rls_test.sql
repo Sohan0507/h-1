@@ -33,7 +33,7 @@ grant select, insert on test.ids to anon, authenticated;
 
 -- Users. The 'role' in metadata must be ignored by the sign-up trigger.
 insert into auth.users (id, email, phone, raw_user_meta_data) values
-  ('00000000-0000-0000-0000-00000000000a', null, '919900000001', '{"full_name":"Pat One","role":"SUPER_ADMIN"}'),
+  ('00000000-0000-0000-0000-00000000000a', null, '919845012345', '{"full_name":"Pat One","role":"SUPER_ADMIN"}'),
   ('00000000-0000-0000-0000-00000000000b', null, '919900000002', '{"full_name":"Pat Two"}'),
   ('00000000-0000-0000-0000-00000000000c', 'reception@example.test', null, '{"full_name":"Front Desk"}'),
   ('00000000-0000-0000-0000-00000000000d', 'admin@example.test', null, '{"full_name":"Hospital Admin"}'),
@@ -129,6 +129,7 @@ set role authenticated;
 do $$
 declare r jsonb;
 begin
+  assert public.claim_guest_bookings() = 0, 'unverified phone claims nothing';
   r := public.book_appointment('doc-101', test.next_dow(1), '12:00', 'Pat One', '9900000001', 'Check-up', p_source => 'FRONT_DESK');
   assert r ->> 'status' = 'CONFIRMED', 'verified patient bookings are confirmed';
   assert r ->> 'source' = 'PATIENT_PORTAL', 'patient source is forced';
@@ -141,6 +142,14 @@ begin
 end $$;
 
 select test.expect_error($q$update public.profiles set role = 'SUPER_ADMIN' where id = auth.uid()$q$, 'permission denied');
+reset role;
+update auth.users set phone_confirmed_at = now() where id = '00000000-0000-0000-0000-00000000000a';
+set role authenticated;
+do $$ begin
+  assert public.claim_guest_bookings() = 1, 'verified phone claims the earlier guest booking';
+  assert (select count(*) from public.appointments) = 2, 'claimed booking is now visible';
+  assert public.claim_guest_bookings() = 0, 'claiming is idempotent';
+end $$;
 select test.expect_error($q$update public.appointments set status = 'CONFIRMED'$q$, 'permission denied');
 select test.expect_error($q$insert into public.appointments (code) values ('x')$q$, 'permission denied');
 select test.expect_error($q$select public.set_user_role('00000000-0000-0000-0000-00000000000b', 'SUPER_ADMIN')$q$, 'not allowed');

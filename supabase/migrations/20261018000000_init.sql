@@ -726,6 +726,34 @@ begin
 end;
 $$;
 
+-- Links bookings made as a guest to the patient's account once they sign in
+-- with the same (verified) mobile number. Returns how many were linked.
+create function public.claim_guest_bookings()
+returns int
+language plpgsql volatile security definer
+set search_path = ''
+as $$
+declare
+  v_phone text;
+  v_count int;
+begin
+  if auth.uid() is null or public.my_role() is distinct from 'PATIENT' then
+    return 0;
+  end if;
+  select right(regexp_replace(u.phone, '\D', '', 'g'), 10) into v_phone
+  from auth.users u
+  where u.id = auth.uid() and u.phone_confirmed_at is not null and coalesce(u.phone, '') <> '';
+  if v_phone is null then
+    return 0;
+  end if;
+  update public.appointments
+  set patient_id = auth.uid()
+  where patient_id is null and patient_phone = v_phone;
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
 -- -----------------------------------------------------------------------------
 -- Administration
 -- -----------------------------------------------------------------------------
@@ -811,6 +839,7 @@ grant execute on function public.get_available_slots(text, date) to anon, authen
 grant execute on function public.book_appointment(text, date, time, text, text, text, text, text, public.appointment_source, text, text) to anon, authenticated;
 grant execute on function public.update_appointment_status(uuid, public.appointment_status, text) to authenticated;
 grant execute on function public.add_appointment_note(uuid, text) to authenticated;
+grant execute on function public.claim_guest_bookings() to authenticated;
 grant execute on function public.set_user_role(uuid, public.app_role, boolean) to authenticated;
 grant execute on function public.list_staff() to authenticated;
 grant execute on function public.get_dashboard_stats() to authenticated;
