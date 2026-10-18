@@ -328,7 +328,6 @@ export const apiClient = {
   doctorSignup: (data: any) => fetch(`${API_BASE}/auth/doctor/signup`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) }).then(res => handleResponse<{ application: DoctorApplication; message: string }>(res)),
   doctorLogin: (data: any) => fetch(`${API_BASE}/auth/doctor/login`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) }).then(res => handleResponse<{ token: string; doctor: any }>(res)),
 
-  managementSignup: (data: any) => fetch(`${API_BASE}/auth/management/signup`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) }).then(res => handleResponse<{ message: string }>(res)),
   managementLogin: (data: any) => fetch(`${API_BASE}/auth/management/login`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) }).then(res => handleResponse<{ token: string; user: AuthUser }>(res)),
 
   // Patient Portal

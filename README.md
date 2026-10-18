@@ -67,10 +67,11 @@ npm run test
 
 ---
 
-## 🔐 Default Seed Credentials
+## 🔐 Staff Accounts
 
-| Role | Username / Email | Password | Access Level |
-|---|---|---|---|
+There are no default or demo staff passwords. Staff accounts are created by invitation only; see `SUPABASE_SETUP.md`.
+
+---|---|---|---|
 | **Super Admin** | `superadmin@citycarehospital.example.com` | `SuperAdmin@123` | Full System & Audit Logs |
 | **Hospital Admin** | `admin@citycarehospital.example.com` | `HospitalAdmin@123` | Operations & Doctor Approvals |
 | **Receptionist** | `reception@citycarehospital.example.com` | `Reception@123` | Appointments & OPD Queue |

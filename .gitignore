@@ -28,3 +28,6 @@ Thumbs.db
 *.swp
 .vercel
 .env*
+
+# Runtime data written by the legacy backend (contains patient data, never commit)
+backend/data/

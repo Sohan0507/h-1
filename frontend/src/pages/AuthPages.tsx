@@ -35,54 +35,6 @@ export const AuthPages: React.FC<Props> = ({ role, onSuccessLogin, onBackToWebsi
   // Management fields
   const [hospitalName, setHospitalName] = useState('');
 
-  const fillAndLogin = (demoEmail: string, demoPass: string) => {
-    setEmail(demoEmail);
-    setPassword(demoPass);
-    setIsSignup(false);
-    setErrorMsg(null);
-  };
-
-  const handleFallbackLogin = (loginEmail: string, loginPass: string): boolean => {
-    const cleanEmail = loginEmail.trim().toLowerCase();
-    const cleanPass = loginPass.trim();
-
-    if (role === 'MANAGEMENT') {
-      if (cleanEmail === 'superadmin@citycarehospital.example.com' && cleanPass === 'SuperAdmin@123') {
-        const mockUser = { id: 'admin-1', email: cleanEmail, name: 'Dr. Ramesh Rao', role: 'SUPER_ADMIN' };
-        localStorage.setItem('hospital_auth_token', 'demo-token-superadmin');
-        onSuccessLogin('demo-token-superadmin', mockUser, 'SUPER_ADMIN');
-        return true;
-      }
-      if (cleanEmail === 'admin@citycarehospital.example.com' && cleanPass === 'HospitalAdmin@123') {
-        const mockUser = { id: 'admin-2', email: cleanEmail, name: 'Priya Sharma', role: 'HOSPITAL_ADMIN' };
-        localStorage.setItem('hospital_auth_token', 'demo-token-admin');
-        onSuccessLogin('demo-token-admin', mockUser, 'HOSPITAL_ADMIN');
-        return true;
-      }
-      if (cleanEmail === 'reception@citycarehospital.example.com' && cleanPass === 'Reception@123') {
-        const mockUser = { id: 'admin-3', email: cleanEmail, name: 'Ananya Hegde', role: 'RECEPTIONIST' };
-        localStorage.setItem('hospital_auth_token', 'demo-token-reception');
-        onSuccessLogin('demo-token-reception', mockUser, 'RECEPTIONIST');
-        return true;
-      }
-    } else if (role === 'DOCTOR') {
-      if (cleanEmail === 'doc101@example.com' && cleanPass === 'Doctor@123') {
-        const mockDoc = { id: 'doc-1', email: cleanEmail, name: 'Dr. Rajesh Kumar', departmentId: 'dept-1', specialization: 'Interventional Cardiology' };
-        localStorage.setItem('hospital_auth_token', 'demo-token-doc');
-        onSuccessLogin('demo-token-doc', mockDoc, 'DOCTOR');
-        return true;
-      }
-    } else if (role === 'PATIENT') {
-      if ((cleanEmail === 'patient@example.com' && cleanPass === 'Patient@123') || cleanEmail.length > 3) {
-        const mockPat = { id: 'pat-1', email: cleanEmail, name: name || 'Sohan Kumar', phone: phone || '9876543210' };
-        localStorage.setItem('hospital_auth_token', 'demo-token-patient');
-        onSuccessLogin('demo-token-patient', mockPat, 'PATIENT');
-        return true;
-      }
-    }
-    return false;
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
@@ -92,23 +44,13 @@ export const AuthPages: React.FC<Props> = ({ role, onSuccessLogin, onBackToWebsi
     try {
       if (role === 'PATIENT') {
         if (isSignup) {
-          try {
-            const res = await apiClient.patientSignup({ name, email, phone, password, dob });
-            localStorage.setItem('hospital_auth_token', res.token);
-            onSuccessLogin(res.token, res.patient, 'PATIENT');
-          } catch {
-            handleFallbackLogin(email, password);
-          }
+          const res = await apiClient.patientSignup({ name, email, phone, password, dob });
+          localStorage.setItem('hospital_auth_token', res.token);
+          onSuccessLogin(res.token, res.patient, 'PATIENT');
         } else {
-          try {
-            const res = await apiClient.patientLogin({ email, password });
-            localStorage.setItem('hospital_auth_token', res.token);
-            onSuccessLogin(res.token, res.patient, 'PATIENT');
-          } catch {
-            if (!handleFallbackLogin(email, password)) {
-              throw new Error('Invalid patient email or password.');
-            }
-          }
+          const res = await apiClient.patientLogin({ email, password });
+          localStorage.setItem('hospital_auth_token', res.token);
+          onSuccessLogin(res.token, res.patient, 'PATIENT');
         }
       } else if (role === 'DOCTOR') {
         if (isSignup) {
@@ -118,30 +60,15 @@ export const AuthPages: React.FC<Props> = ({ role, onSuccessLogin, onBackToWebsi
           });
           setSuccessMsg(res.message);
         } else {
-          try {
-            const res = await apiClient.doctorLogin({ email, password });
-            localStorage.setItem('hospital_auth_token', res.token);
-            onSuccessLogin(res.token, res.doctor, 'DOCTOR');
-          } catch {
-            if (!handleFallbackLogin(email, password)) {
-              throw new Error('Invalid doctor email or password. Use demo doctor login below.');
-            }
-          }
+          const res = await apiClient.doctorLogin({ email, password });
+          localStorage.setItem('hospital_auth_token', res.token);
+          onSuccessLogin(res.token, res.doctor, 'DOCTOR');
         }
       } else if (role === 'MANAGEMENT') {
-        if (isSignup) {
-          const res = await apiClient.managementSignup({ hospitalName, name, email, phone, password });
-          setSuccessMsg(res.message);
-        } else {
-          try {
-            const res = await apiClient.managementLogin({ email, password });
-            localStorage.setItem('hospital_auth_token', res.token);
-            onSuccessLogin(res.token, res.user, res.user.role);
-          } catch {
-            if (!handleFallbackLogin(email, password)) {
-              throw new Error('Invalid management credentials. Please use the demo accounts below.');
-            }
-          }
+        {
+          const res = await apiClient.managementLogin({ email, password });
+          localStorage.setItem('hospital_auth_token', res.token);
+          onSuccessLogin(res.token, res.user, res.user.role);
         }
       }
     } catch (err: any) {
@@ -177,88 +104,6 @@ export const AuthPages: React.FC<Props> = ({ role, onSuccessLogin, onBackToWebsi
             </p>
           </div>
         </div>
-
-        {/* ⚡ One-Click Demo Credentials Quick Bar */}
-        {!isSignup && (
-          <div className="p-4 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border border-blue-200/80 rounded-2xl space-y-2.5">
-            <div className="flex items-center gap-2 text-xs font-black text-blue-900 uppercase tracking-wider">
-              <Sparkles className="w-4 h-4 text-amber-500 fill-amber-400" />
-              <span>1-Click Demo Credentials (Click to Auto-Fill):</span>
-            </div>
-
-            {role === 'MANAGEMENT' && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
-                <button
-                  type="button"
-                  onClick={() => fillAndLogin('superadmin@citycarehospital.example.com', 'SuperAdmin@123')}
-                  className="p-2.5 bg-white hover:bg-blue-600 hover:text-white rounded-xl border border-blue-200 text-left transition-all shadow-sm group cursor-pointer active:scale-95"
-                >
-                  <div className="font-extrabold text-slate-900 group-hover:text-white flex items-center gap-1">
-                    <span>👑 Super Admin</span>
-                  </div>
-                  <div className="text-[10px] text-slate-500 group-hover:text-blue-100 truncate">superadmin@citycarehospital...</div>
-                  <div className="text-[10px] font-mono text-emerald-600 group-hover:text-white font-bold">Pass: SuperAdmin@123</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => fillAndLogin('admin@citycarehospital.example.com', 'HospitalAdmin@123')}
-                  className="p-2.5 bg-white hover:bg-blue-600 hover:text-white rounded-xl border border-blue-200 text-left transition-all shadow-sm group cursor-pointer active:scale-95"
-                >
-                  <div className="font-extrabold text-slate-900 group-hover:text-white flex items-center gap-1">
-                    <span>🏥 Hospital Admin</span>
-                  </div>
-                  <div className="text-[10px] text-slate-500 group-hover:text-blue-100 truncate">admin@citycarehospital...</div>
-                  <div className="text-[10px] font-mono text-emerald-600 group-hover:text-white font-bold">Pass: HospitalAdmin@123</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => fillAndLogin('reception@citycarehospital.example.com', 'Reception@123')}
-                  className="p-2.5 bg-white hover:bg-blue-600 hover:text-white rounded-xl border border-blue-200 text-left transition-all shadow-sm group cursor-pointer active:scale-95"
-                >
-                  <div className="font-extrabold text-slate-900 group-hover:text-white flex items-center gap-1">
-                    <span>📋 Receptionist</span>
-                  </div>
-                  <div className="text-[10px] text-slate-500 group-hover:text-blue-100 truncate">reception@citycarehospital...</div>
-                  <div className="text-[10px] font-mono text-emerald-600 group-hover:text-white font-bold">Pass: Reception@123</div>
-                </button>
-              </div>
-            )}
-
-            {role === 'DOCTOR' && (
-              <div className="text-[11px]">
-                <button
-                  type="button"
-                  onClick={() => fillAndLogin('doc101@example.com', 'Doctor@123')}
-                  className="w-full p-3 bg-white hover:bg-blue-600 hover:text-white rounded-xl border border-blue-200 text-left transition-all shadow-sm group cursor-pointer active:scale-95"
-                >
-                  <div className="font-extrabold text-slate-900 group-hover:text-white flex items-center gap-1.5">
-                    <Stethoscope className="w-4 h-4 text-blue-600 group-hover:text-white" />
-                    <span>🩺 Sample Doctor (Dr. Rajesh Kumar - Cardiology)</span>
-                  </div>
-                  <div className="text-[10px] text-slate-500 group-hover:text-blue-100">Email: doc101@example.com | Pass: Doctor@123</div>
-                </button>
-              </div>
-            )}
-
-            {role === 'PATIENT' && (
-              <div className="text-[11px]">
-                <button
-                  type="button"
-                  onClick={() => fillAndLogin('patient@example.com', 'Patient@123')}
-                  className="w-full p-3 bg-white hover:bg-emerald-600 hover:text-white rounded-xl border border-emerald-200 text-left transition-all shadow-sm group cursor-pointer active:scale-95"
-                >
-                  <div className="font-extrabold text-slate-900 group-hover:text-white flex items-center gap-1.5">
-                    <User className="w-4 h-4 text-emerald-600 group-hover:text-white" />
-                    <span>👤 Sample Patient Account</span>
-                  </div>
-                  <div className="text-[10px] text-slate-500 group-hover:text-emerald-100">Email: patient@example.com | Pass: Patient@123</div>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
 
         {errorMsg && (
           <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-rose-800 text-xs font-semibold">
